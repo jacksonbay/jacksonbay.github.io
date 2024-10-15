@@ -249,6 +249,12 @@
                 sellerNameInput.disabled = true;
             }
         };
+
+        window.resetSellerName = function() {
+            sellerNameInput.value = '';
+            sellerNameInput.disabled = false;
+            setCookie('sellerName', '', -1);
+        };
     </script>
 </head>
 <body>
@@ -265,6 +271,7 @@
             <select id="category">
                 <option value="Candy and Food">Candy and Food</option>
                 <option value="Goods and Services">Goods and Services</option>
+                <option value="The Sweets Shop">The Sweets Shop</option>
             </select>
             <button onclick="submitProduct()">Submit</button>
         </div>
