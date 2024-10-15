@@ -5,16 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JBay</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
-        #product-list, #notification-box { margin: 20px 0; }
-        .product, .notification { border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; }
-        #inbox { cursor: pointer; display: inline-block; padding: 5px; border: 1px solid #000; }
-        #notification-dropdown { display: none; position: absolute; background: white; border: 1px solid #ccc; padding: 10px; }
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; position: relative; }
+        #product-list { margin: 20px 0; }
+        .product { border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; position: relative; }
+        .delete-button { color: red; cursor: pointer; position: absolute; top: 10px; right: 10px; }
+        .top-right { position: absolute; top: 20px; right: 20px; }
+        #inbox, #list-product { cursor: pointer; display: inline-block; padding: 5px; border: 1px solid #000; margin-right: 10px; }
+        #notification-dropdown, #product-options { display: none; position: absolute; background: white; border: 1px solid #ccc; padding: 10px; z-index: 10; }
+        #seller-name-input { margin-bottom: 10px; }
+        .button { margin-right: 5px; cursor: pointer; padding: 5px 10px; }
+        .accept { background-color: green; color: white; }
+        .reject { background-color: red; color: white; }
+        .notification { margin-bottom: 10px; }
     </style>
     <script type="module">
-        // Import the functions you need from the SDKs you need
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.1.3/firebase-app.js";
-        import { getDatabase, ref, set, get, child, onValue } from "https://www.gstatic.com/firebasejs/9.1.3/firebase-database.js";
+        import { getDatabase, ref, set, get, remove } from "https://www.gstatic.com/firebasejs/9.1.3/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyB-53rEpdsaz8nkEkyjCTs8Srluoknu0ms",
@@ -26,23 +32,32 @@
             measurementId: "G-V62SN9KHJ9"
         };
 
-        // Initialize Firebase
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
-        let uid = Math.floor(Math.random() * 9000000) + 1000000; // Generates a random UID
         const notifications = [];
+        const sellerNameInput = document.getElementById('seller-name-input');
+        let userUID = null;
 
-        document.addEventListener('DOMContentLoaded', loadProducts);
+        document.addEventListener('DOMContentLoaded', () => {
+            loadProducts();
+            loadSellerName();
+            loadUID();
+        });
 
         document.getElementById('inbox').onclick = function() {
             const dropdown = document.getElementById('notification-dropdown');
             dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
-            dropdown.innerHTML = notifications.map(n => `<div class="notification">${n}</div>`).join('');
+            updateNotificationDropdown();
+        };
+
+        document.getElementById('list-product').onclick = function() {
+            const options = document.getElementById('product-options');
+            options.style.display = options.style.display === 'none' ? 'block' : 'none';
         };
 
         window.submitProduct = function() {
             const name = document.getElementById('product-name').value;
-            const seller = document.getElementById('seller-name').value;
+            const seller = getSellerName();
             const price = document.getElementById('price').value;
             const category = document.getElementById('category').value;
 
@@ -50,7 +65,6 @@
             set(newProductRef, { name, seller, price, category });
 
             document.getElementById('product-name').value = '';
-            document.getElementById('seller-name').value = '';
             document.getElementById('price').value = '';
 
             loadProducts();
@@ -64,12 +78,15 @@
                 if (snapshot.exists()) {
                     snapshot.forEach(childSnapshot => {
                         const product = childSnapshot.val();
+                        const deleteButton = userUID === '1' ? `<span class="delete-button" onclick="deleteProduct('${childSnapshot.key}')">X</span>` : '';
                         productList.innerHTML += `
-                            <div class="product" onclick="viewProduct('${childSnapshot.key}')">
+                            <div class="product">
                                 <strong>${product.name}</strong><br>
                                 Price: ${product.price} JB<br>
                                 Seller: ${product.seller}<br>
-                                <em>Click for info</em>
+                                Category: ${product.category}<br>
+                                <em onclick="viewProduct('${childSnapshot.key}')">Click to Purchase</em>
+                                ${deleteButton}
                             </div>
                         `;
                     });
@@ -83,32 +100,136 @@
             const productRef = ref(db, 'products/' + productId);
             get(productRef).then(snapshot => {
                 const product = snapshot.val();
-                const confirmation = confirm(`ARE YOU SURE?\n\n${product.name}\nPrice: ${product.price} JB\nSeller: ${product.seller}`);
-                if (confirmation) {
-                    notifications.push(`Your product "${product.name}" has been purchased!`);
-                    loadProducts();
-                }
+                sendPurchaseNotification(product);
             });
+        };
+
+        function sendPurchaseNotification(product) {
+            const notificationId = `notif-${Date.now()}`;
+            const sellerNotification = `${getSellerName()} has purchased your product "${product.name}". Do you accept? 
+                <button class="accept" onclick="acceptPurchase('${notificationId}', '${product.name}')">Yes</button> 
+                <button class="reject" onclick="rejectPurchase('${notificationId}', '${product.name}')">No</button>`;
+            notifications.push({ id: notificationId, content: sellerNotification });
+            updateNotificationCount();
+            updateNotificationDropdown();
+        }
+
+        window.acceptPurchase = function(notificationId, productName) {
+            notifications.push(`${getSellerName()} has accepted your purchase for "${productName}".`);
+            removeNotification(notificationId);
+            updateNotificationCount();
+            updateNotificationDropdown();
+        };
+
+        window.rejectPurchase = function(notificationId, productName) {
+            notifications.push(`${getSellerName()} has rejected your purchase for "${productName}".`);
+            removeNotification(notificationId);
+            updateNotificationCount();
+            updateNotificationDropdown();
+        };
+
+        function removeNotification(notificationId) {
+            const index = notifications.findIndex(n => n.id === notificationId);
+            if (index !== -1) {
+                notifications.splice(index, 1);
+            }
+        }
+
+        function updateNotificationCount() {
+            const inboxButton = document.getElementById('inbox');
+            inboxButton.innerText = `Inbox (${notifications.length})`;
+        }
+
+        function updateNotificationDropdown() {
+            const dropdown = document.getElementById('notification-dropdown');
+            dropdown.innerHTML = notifications.map(n => `<div class="notification">${n.content || n}</div>`).join('');
+        }
+
+        window.deleteProduct = function(productId) {
+            const confirmation = confirm("Are you sure you would like to delete this product?");
+            if (confirmation) {
+                const productRef = ref(db, 'products/' + productId);
+                remove(productRef).then(() => {
+                    notifications.push("Product deleted successfully.");
+                    loadProducts();
+                }).catch(error => {
+                    console.error("Error deleting product:", error);
+                });
+            }
+        };
+
+        function loadSellerName() {
+            const name = getCookie('sellerName');
+            if (name) {
+                sellerNameInput.value = name;
+                sellerNameInput.disabled = true;
+            }
+        }
+
+        function loadUID() {
+            let uid = getCookie('userUID');
+            if (!uid) {
+                uid = Math.floor(Math.random() * 9000000) + 1000000;
+                setCookie('userUID', uid, 10000);
+            }
+            userUID = uid;
+            console.log("User UID:", userUID);
+        }
+
+        window.lockSellerName = function(event) {
+            if (event.key === 'Enter') {
+                getSellerName();
+                sellerNameInput.disabled = true;
+            }
+        };
+
+        sellerNameInput.addEventListener('keydown', lockSellerName);
+
+        function getSellerName() {
+            const name = sellerNameInput.value;
+            setCookie('sellerName', name, 10000);
+            return name;
+        }
+
+        function setCookie(name, value, days) {
+            const expires = new Date(Date.now() + days * 864e5).toUTCString();
+            document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/`;
+        }
+
+        function getCookie(name) {
+            return document.cookie.split('; ').reduce((r, v) => {
+                const parts = v.split('=');
+                return parts[0] === name ? decodeURIComponent(parts[1]) : r;
+            }, '');
+        }
+
+        window.resetSellerName = function() {
+            sellerNameInput.value = '';
+            sellerNameInput.disabled = false;
+            setCookie('sellerName', '', -1);
         };
     </script>
 </head>
 <body>
 
     <h1>JBay</h1>
-    <div>
-        <span id="inbox">Inbox</span>
-        <div id="notification-dropdown"></div>
+    <div class="top-right">
+        <span id="inbox">Inbox (0)</span>
+        <span id="list-product">List Product</span>
+        <div id="notification-dropdown" style="display: none;"></div>
+        <div id="product-options" style="display: none;">
+            <input type="text" id="product-name" placeholder="Product Name">
+            <input type="number" id="price" placeholder="Price (JB)">
+            <select id="category">
+                <option value="Candy and Food">Candy and Food</option>
+                <option value="Goods and Services">Goods and Services</option>
+            </select>
+            <button onclick="submitProduct()">Submit</button>
+        </div>
     </div>
 
-    <h2>List a Product</h2>
-    <input type="text" id="product-name" placeholder="Product Name">
-    <input type="text" id="seller-name" placeholder="Seller Name">
-    <input type="number" id="price" placeholder="Price (JB)">
-    <select id="category">
-        <option value="Candy and Food">Candy and Food</option>
-        <option value="Goods and Services">Goods and Services</option>
-    </select>
-    <button onclick="submitProduct()">Submit</button>
+    <input type="text" id="seller-name-input" placeholder="Your Name">
+    <button onclick="resetSellerName()">Reset Name</button>
 
     <div id="product-list"></div>
 
