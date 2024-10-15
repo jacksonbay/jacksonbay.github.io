@@ -36,15 +36,16 @@
 
     <script>
         const firebaseConfig = {
-          apiKey: "AIzaSyB-53rEpdsaz8nkEkyjCTs8Srluoknu0ms",
-          authDomain: "jbay-85265.firebaseapp.com",
-          projectId: "jbay-85265",
-          storageBucket: "jbay-85265.appspot.com",
-          messagingSenderId: "353941111639",
-          appId: "1:353941111639:web:d007182a1860df5841b412",
-          measurementId: "G-V62SN9KHJ9"
+            apiKey: "AIzaSyB-53rEpdsaz8nkEkyjCTs8Srluoknu0ms",
+            authDomain: "jbay-85265.firebaseapp.com",
+            projectId: "jbay-85265",
+            storageBucket: "jbay-85265.appspot.com",
+            messagingSenderId: "353941111639",
+            appId: "1:353941111639:web:d007182a1860df5841b412",
+            measurementId: "G-V62SN9KHJ9"
         };
 
+        // Initialize Firebase
         const app = firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
         let uid = Math.floor(Math.random() * 9000000) + 1000000; // Generates a random UID
