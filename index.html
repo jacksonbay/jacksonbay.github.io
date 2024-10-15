@@ -212,6 +212,19 @@
             }, '');
         }
 
+        window.deleteProduct = function(productId) {
+            const confirmation = confirm("Are you sure you would like to delete this product?");
+            if (confirmation) {
+                const productRef = ref(db, 'products/' + productId);
+                remove(productRef).then(() => {
+                    notifications.push("Product deleted successfully.");
+                    loadProducts();
+                }).catch(error => {
+                    console.error("Error deleting product:", error);
+                });
+            }
+        };
+
         function loadSellerName() {
             const name = getCookie('sellerName');
             if (name) {
