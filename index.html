@@ -10,9 +10,10 @@
         .product { border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; position: relative; }
         .delete-button { color: red; cursor: pointer; position: absolute; top: 10px; right: 10px; }
         .top-right { position: absolute; top: 20px; right: 20px; }
-        #inbox, #list-product { cursor: pointer; display: inline-block; padding: 5px; border: 1px solid #000; margin-right: 10px; }
+        #inbox, #list-product, #clear-inbox { cursor: pointer; display: inline-block; padding: 5px; border: 1px solid #000; margin-right: 10px; }
         #notification-dropdown, #product-options { display: none; position: absolute; background: white; border: 1px solid #ccc; padding: 10px; z-index: 10; }
         #seller-name-input { margin-bottom: 10px; }
+        #inbox-id-container { display: none; margin-top: 10px; }
         .button { margin-right: 5px; cursor: pointer; padding: 5px 10px; }
         .accept { background-color: green; color: white; }
         .reject { background-color: red; color: white; }
@@ -20,7 +21,7 @@
     </style>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.1.3/firebase-app.js";
-        import { getDatabase, ref, set, get, remove } from "https://www.gstatic.com/firebasejs/9.1.3/firebase-database.js";
+        import { getDatabase, ref, set, get, remove, child } from "https://www.gstatic.com/firebasejs/9.1.3/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyB-53rEpdsaz8nkEkyjCTs8Srluoknu0ms",
@@ -34,25 +35,38 @@
 
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
-        const notifications = [];
-        const sellerNameInput = document.getElementById('seller-name-input');
+        let inboxID = null;
         let userUID = null;
+        let sellerNameInput = null;
+        let unreadNotificationsCount = 0;
 
         document.addEventListener('DOMContentLoaded', () => {
+            sellerNameInput = document.getElementById('seller-name-input');
             loadProducts();
             loadSellerName();
             loadUID();
+            checkInboxID();
+
+            sellerNameInput.addEventListener('keydown', lockSellerName);
         });
 
         document.getElementById('inbox').onclick = function() {
-            const dropdown = document.getElementById('notification-dropdown');
-            dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
-            updateNotificationDropdown();
+            if (!inboxID) {
+                promptInboxID();
+            } else {
+                const dropdown = document.getElementById('notification-dropdown');
+                dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+                loadInboxMessages();
+            }
         };
 
         document.getElementById('list-product').onclick = function() {
             const options = document.getElementById('product-options');
             options.style.display = options.style.display === 'none' ? 'block' : 'none';
+        };
+
+        document.getElementById('clear-inbox').onclick = function() {
+            clearInbox();
         };
 
         window.submitProduct = function() {
@@ -62,7 +76,7 @@
             const category = document.getElementById('category').value;
 
             const newProductRef = ref(db, 'products/' + Date.now());
-            set(newProductRef, { name, seller, price, category });
+            set(newProductRef, { name, seller, price, category, inboxID });
 
             document.getElementById('product-name').value = '';
             document.getElementById('price').value = '';
@@ -106,57 +120,97 @@
 
         function sendPurchaseNotification(product) {
             const notificationId = `notif-${Date.now()}`;
-            const sellerNotification = `${getSellerName()} has purchased your product "${product.name}". Do you accept? 
-                <button class="accept" onclick="acceptPurchase('${notificationId}', '${product.name}')">Yes</button> 
-                <button class="reject" onclick="rejectPurchase('${notificationId}', '${product.name}')">No</button>`;
-            notifications.push({ id: notificationId, content: sellerNotification });
-            updateNotificationCount();
-            updateNotificationDropdown();
+            const buyerUsername = getSellerName(); // Current user's username (buyer)
+            const sellerInboxID = product.inboxID; // Seller's inbox ID
+            const message = `${buyerUsername} has purchased your product "${product.name}".`;
+
+            // Send the message to the seller's inbox
+            const sellerInboxRef = ref(db, `inboxes/${sellerInboxID}/${notificationId}`);
+            set(sellerInboxRef, {
+                message,
+                timestamp: Date.now()
+            });
+
+            // Message will expire after 1 week
+            setTimeout(() => remove(sellerInboxRef), 7 * 24 * 60 * 60 * 1000);
         }
 
-        window.acceptPurchase = function(notificationId, productName) {
-            notifications.push(`${getSellerName()} has accepted your purchase for "${productName}".`);
-            removeNotification(notificationId);
-            updateNotificationCount();
-            updateNotificationDropdown();
-        };
+        function loadInboxMessages() {
+            const inboxRef = ref(db, `inboxes/${inboxID}`);
+            get(inboxRef).then(snapshot => {
+                const dropdown = document.getElementById('notification-dropdown');
+                dropdown.innerHTML = '';
+                unreadNotificationsCount = 0;
+                if (snapshot.exists()) {
+                    snapshot.forEach(childSnapshot => {
+                        const notification = childSnapshot.val();
+                        dropdown.innerHTML += `<div class="notification">${notification.message}</div>`;
+                        unreadNotificationsCount++;
+                    });
+                } else {
+                    dropdown.innerHTML = 'No messages found.';
+                }
+                updateInboxDisplay();
+            });
+        }
 
-        window.rejectPurchase = function(notificationId, productName) {
-            notifications.push(`${getSellerName()} has rejected your purchase for "${productName}".`);
-            removeNotification(notificationId);
-            updateNotificationCount();
-            updateNotificationDropdown();
-        };
+        function clearInbox() {
+            const inboxRef = ref(db, `inboxes/${inboxID}`);
+            remove(inboxRef).then(() => {
+                loadInboxMessages();
+            });
+        }
 
-        function removeNotification(notificationId) {
-            const index = notifications.findIndex(n => n.id === notificationId);
-            if (index !== -1) {
-                notifications.splice(index, 1);
+        function checkInboxID() {
+            inboxID = getCookie('inboxID');
+            if (!inboxID) {
+                document.getElementById('inbox').innerText = "Set your Inbox ID!";
+            } else {
+                updateInboxDisplay();
             }
         }
 
-        function updateNotificationCount() {
-            const inboxButton = document.getElementById('inbox');
-            inboxButton.innerText = `Inbox (${notifications.length})`;
+        function updateInboxDisplay() {
+            document.getElementById('inbox').innerText = `Inbox (${unreadNotificationsCount})`;
         }
 
-        function updateNotificationDropdown() {
-            const dropdown = document.getElementById('notification-dropdown');
-            dropdown.innerHTML = notifications.map(n => `<div class="notification">${n.content || n}</div>`).join('');
+        function promptInboxID() {
+            const inboxContainer = document.getElementById('inbox-id-container');
+            inboxContainer.style.display = 'block'; // Show the input field
         }
 
-        window.deleteProduct = function(productId) {
-            const confirmation = confirm("Are you sure you would like to delete this product?");
-            if (confirmation) {
-                const productRef = ref(db, 'products/' + productId);
-                remove(productRef).then(() => {
-                    notifications.push("Product deleted successfully.");
-                    loadProducts();
-                }).catch(error => {
-                    console.error("Error deleting product:", error);
-                });
+        window.setInboxID = function(event) {
+            if (event.key === "Enter") {
+                const inboxInput = document.getElementById('inbox-id');
+                const id = inboxInput.value;
+                if (/^\d{5}$/.test(id)) {
+                    inboxID = id;
+                    setCookie('inboxID', id, 365);
+                    document.getElementById('inbox').innerText = `Inbox (${unreadNotificationsCount})`;
+                    document.getElementById('inbox-id-container').style.display = 'none'; // Hide the input field after setting ID
+                } else {
+                    alert("Inbox ID must be a 5-digit number.");
+                }
             }
         };
+
+        function getSellerName() {
+            const name = sellerNameInput.value;
+            setCookie('sellerName', name, 10000);
+            return name;
+        }
+
+        function setCookie(name, value, days) {
+            const expires = new Date(Date.now() + days * 864e5).toUTCString();
+            document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/`;
+        }
+
+        function getCookie(name) {
+            return document.cookie.split('; ').reduce((r, v) => {
+                const parts = v.split('=');
+                return parts[0] === name ? decodeURIComponent(parts[1]) : r;
+            }, '');
+        }
 
         function loadSellerName() {
             const name = getCookie('sellerName');
@@ -182,32 +236,6 @@
                 sellerNameInput.disabled = true;
             }
         };
-
-        sellerNameInput.addEventListener('keydown', lockSellerName);
-
-        function getSellerName() {
-            const name = sellerNameInput.value;
-            setCookie('sellerName', name, 10000);
-            return name;
-        }
-
-        function setCookie(name, value, days) {
-            const expires = new Date(Date.now() + days * 864e5).toUTCString();
-            document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/`;
-        }
-
-        function getCookie(name) {
-            return document.cookie.split('; ').reduce((r, v) => {
-                const parts = v.split('=');
-                return parts[0] === name ? decodeURIComponent(parts[1]) : r;
-            }, '');
-        }
-
-        window.resetSellerName = function() {
-            sellerNameInput.value = '';
-            sellerNameInput.disabled = false;
-            setCookie('sellerName', '', -1);
-        };
     </script>
 </head>
 <body>
@@ -215,6 +243,7 @@
     <h1>JBay</h1>
     <div class="top-right">
         <span id="inbox">Inbox (0)</span>
+        <span id="clear-inbox">Clear Inbox</span>
         <span id="list-product">List Product</span>
         <div id="notification-dropdown" style="display: none;"></div>
         <div id="product-options" style="display: none;">
@@ -225,6 +254,9 @@
                 <option value="Goods and Services">Goods and Services</option>
             </select>
             <button onclick="submitProduct()">Submit</button>
+        </div>
+        <div id="inbox-id-container">
+            <input type="text" id="inbox-id" placeholder="Enter 5-digit Inbox ID" maxlength="5" onkeydown="setInboxID(event)">
         </div>
     </div>
 
