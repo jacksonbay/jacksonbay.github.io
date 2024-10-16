@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
     <title>JBay</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 0; padding: 20px; position: relative; }
@@ -41,6 +42,58 @@
         let userUID = null;
         let sellerNameInput = null;
         let unreadNotificationsCount = 0;
+        
+class NotificationManager {
+    constructor() {
+        this.notifications = [];
+        this.currentFilter = 'all';
+    }
+
+    markAsRead(notificationId) {
+        const notifRef = ref(db, `inboxes/${inboxID}/${notificationId}`);
+        update(notifRef, { read: true }).then(() => {
+            notifiedMessageIds.delete(notificationId);
+            loadInboxMessages();
+        });
+    }
+
+    deleteNotification(notificationId) {
+        const notifRef = ref(db, `inboxes/${inboxID}/${notificationId}`);
+        remove(notifRef).then(() => {
+            notifiedMessageIds.delete(notificationId);
+            loadInboxMessages();
+        });
+    }
+
+    filterNotifications(filter) {
+        this.currentFilter = filter;
+        loadInboxMessages();
+    }
+  }
+        const notificationManager = new NotificationManager();
+        window.notificationManager = notificationManager;
+        function initializeNotifications() {
+            if (Notification.permission !== "granted" && Notification.permission !== "denied") {
+                Notification.requestPermission();
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            sellerNameInput = document.getElementById('seller-name-input');
+            loadProducts();
+            loadSellerName();
+            loadUID();
+            checkInboxID();
+            initializeNotifications();
+            sellerNameInput.addEventListener('keydown', lockSellerName);
+
+            if (inboxID) {
+                const inboxRef = ref(db, `inboxes/${inboxID}`);
+                onValue(inboxRef, (snapshot) => {
+                    loadInboxMessages();
+                });
+            }
+        });
 
         document.addEventListener('DOMContentLoaded', () => {
             sellerNameInput = document.getElementById('seller-name-input');
@@ -70,7 +123,39 @@
         document.getElementById('clear-inbox').onclick = function() {
             clearInbox();
         };
+        function initializeInboxMonitoring() {
+    if (inboxID) {
+        if (activeInboxListener) {
+            activeInboxListener();
+        }
+        const inboxRef = ref(db, `inboxes/${inboxID}`);
+        activeInboxListener = onValue(inboxRef, (snapshot) => {
+            let newUnreadCount = 0;
+            const notifications = [];
+            if (snapshot.exists()) {
+                snapshot.forEach(childSnapshot => {
+                    const notification = {
+                        id: childSnapshot.key,
+                        ...childSnapshot.val()
+                    };
+                    if (!notification.read) {
+                        newUnreadCount++;
+                        if (!notifiedMessageIds.has(notification.id) && Notification.permission === "granted") {
+                            notifiedMessageIds.add(notification.id);
+                            new Notification("New JBay Message", {
+                                body: notification.message
+                            });
+                        }
+                    }
+                    notifications.push(notification);
+                });
+            }
 
+            unreadNotificationsCount = newUnreadCount;
+            updateInboxDisplay();
+        });
+    }
+}
         window.submitProduct = function() {
             const name = document.getElementById('product-name').value;
             const seller = getSellerName();
@@ -87,7 +172,6 @@
 
             loadProducts();
         };
-
         function loadProducts() {
             const productsRef = ref(db, 'products');
             get(productsRef).then(snapshot => {
@@ -118,13 +202,11 @@
                 }
             });
         }
-
         window.updateSlider = function(productId) {
             const slider = document.getElementById(`quantity-slider-${productId}`);
             const display = slider.previousElementSibling;
             display.textContent = slider.value;
         };
-
           window.confirmPurchase = function(productId, maxQuantity) {
               const slider = document.getElementById(`quantity-slider-${productId}`);
               const quantityToBuy = parseInt(slider.value);
@@ -135,67 +217,99 @@
                       if (snapshot.exists()) {
                           const product = snapshot.val();
                           const remainingQuantity = product.quantity - quantityToBuy;
-
-                          // Send purchase notification
                           sendPurchaseNotification(product, quantityToBuy);
-
-                          // Update or delete product based on remaining quantity
                           if (remainingQuantity > 0) {
                               set(productRef, {
                                   ...product,
                                   quantity: remainingQuantity
                               });
                           } else {
-                              remove(productRef); // Delete product if quantity is 0
+                              remove(productRef);
                           }
-
-                          loadProducts(); // Refresh the product list
+                          loadProducts();
                       }
                   });
               }
           };
 
-        function sendPurchaseNotification(product, quantity) {
+          function sendPurchaseNotification(product, quantity) {
             const notificationId = `notif-${Date.now()}`;
-            const buyerUsername = decodeURIComponent(getSellerName());  // Decode the buyer's username to handle spaces correctly
+            const buyerUsername = decodeURIComponent(getSellerName());
             const sellerInboxID = product.inboxID;
             const totalPrice = product.price * quantity;
             const pricePerProduct = product.price;
             
-            // Create the notification message
-            const message = `${buyerUsername} has purchased ${quantity} of your product "${product.name}". The total price combined is ${totalPrice} JB, the price per product was ${pricePerProduct} JB.`;
+            const notification = {
+                message: `${buyerUsername} has purchased ${quantity} of your product "${product.name}". The total price combined is ${totalPrice} JB, the price per product was ${pricePerProduct} JB.`,
+                timestamp: Date.now(),
+                read: false,
+                type: 'purchase',
+                details: {
+                    buyer: buyerUsername,
+                    product: product.name,
+                    quantity: quantity,
+                    totalPrice: totalPrice,
+                    pricePerUnit: pricePerProduct
+                }
+            };
 
-            // Send the message to the seller's inbox
             const sellerInboxRef = ref(db, `inboxes/${sellerInboxID}/${notificationId}`);
-            set(sellerInboxRef, {
-                message,
-                timestamp: Date.now()
-            });
-
-            // Remove the message after 1 week
+            set(sellerInboxRef, notification);
             setTimeout(() => remove(sellerInboxRef), 7 * 24 * 60 * 60 * 1000);
         }
 
+function loadInboxMessages() {
+    const inboxRef = ref(db, `inboxes/${inboxID}`);
+    get(inboxRef).then(snapshot => {
+        const dropdown = document.getElementById('notification-dropdown');
+        const notifications = [];
 
-        function loadInboxMessages() {
-            const inboxRef = ref(db, `inboxes/${inboxID}`);
-            get(inboxRef).then(snapshot => {
-                const dropdown = document.getElementById('notification-dropdown');
-                dropdown.innerHTML = '';
-                unreadNotificationsCount = 0;
-                if (snapshot.exists()) {
-                    snapshot.forEach(childSnapshot => {
-                        const notification = childSnapshot.val();
-                        dropdown.innerHTML += `<div class="notification">${notification.message}</div>`;
-                        unreadNotificationsCount++;
-                    });
-                } else {
-                    dropdown.innerHTML = 'No messages found.';
+        if (snapshot.exists()) {
+            snapshot.forEach(childSnapshot => {
+                const notification = {
+                    id: childSnapshot.key,
+                    ...childSnapshot.val()
+                };
+                if (notificationManager.currentFilter === 'all' ||
+                    (notificationManager.currentFilter === 'unread' && !notification.read) ||
+                    (notificationManager.currentFilter === 'read' && notification.read)) {
+                    notifications.push(notification);
                 }
-                updateInboxDisplay();
             });
-        }
+            notifications.sort((a, b) => b.timestamp - a.timestamp);
+            dropdown.innerHTML = `
+                <div class="inbox-header">
+                    <h3>Messages (${unreadNotificationsCount} unread)</h3>
+                    <select onchange="notificationManager.filterNotifications(this.value)">
+                        <option value="all">All Messages</option>
+                        <option value="unread">Unread</option>
+                        <option value="read">Read</option>
+                    </select>
+                </div>
+            `;
 
+            notifications.forEach(notification => {
+                const timestamp = new Date(notification.timestamp).toLocaleString();
+                dropdown.innerHTML += `
+                    <div class="notification ${notification.read ? '' : 'unread'}" id="notification-${notification.id}">
+                        <div class="notification-content">${notification.message}</div>
+                        <div class="notification-timestamp">${timestamp}</div>
+                        <div class="notification-actions">
+                            ${!notification.read ? 
+                                `<button class="mark-read-btn" onclick="notificationManager.markAsRead('${notification.id}')">Mark as Read</button>` 
+                                : ''
+                            }
+                            <button class="delete-btn" onclick="notificationManager.deleteNotification('${notification.id}')">Delete</button>
+                        </div>
+                    </div>
+                `;
+            });
+        } else {
+            dropdown.innerHTML = '<div class="inbox-empty">No messages found</div>';
+        }
+        updateInboxDisplay();
+    });
+}
         function clearInbox() {
             const inboxRef = ref(db, `inboxes/${inboxID}`);
             remove(inboxRef).then(() => {
@@ -213,7 +327,8 @@
         }
 
         function updateInboxDisplay() {
-            document.getElementById('inbox').innerText = `Inbox (${unreadNotificationsCount})`;
+            const inboxButton = document.getElementById('inbox');
+            inboxButton.innerHTML = `Inbox ${unreadNotificationsCount > 0 ? `(${unreadNotificationsCount})` : ''}`;
         }
 
         function promptInboxID() {
@@ -228,6 +343,7 @@
                     setCookie('inboxID', inboxID, 10000);
                     document.getElementById('inbox-id-container').style.display = 'none';
                     updateInboxDisplay();
+                    initializeInboxMonitoring();
                 } else {
                     alert('Inbox ID must be 5 digits');
                 }
@@ -293,6 +409,10 @@
             sellerNameInput.disabled = false;
             setCookie('sellerName', '', -1);
         };
+
+        let activeInboxListener = null;
+        let notifiedMessageIds = new Set();
+
     </script>
 </head>
 <body>
@@ -327,5 +447,6 @@
     <h1>Rules:</h1>
     <p>1. Set Inbox ID Before selling or buying.</p>
     <p>2. Set your name as your actual name, Or you will not be able to recieve your product.</p>
+    <p>3. Please do not list inappropriate products or we will take down your post.</p>
 </body>
 </html>
