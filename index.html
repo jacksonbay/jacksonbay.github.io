@@ -11,7 +11,7 @@
         .product { border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; position: relative; }
         .delete-button { color: red; cursor: pointer; position: absolute; top: 10px; right: 10px; }
         .top-right { position: absolute; top: 20px; right: 20px; }
-        #inbox, #list-product, #clear-inbox { cursor: pointer; display: inline-block; padding: 5px; border: 1px solid #000; margin-right: 10px; }
+        #inbox, #list-product, #clear-inbox, #dark-mode-toggle { cursor: pointer; display: inline-block; padding: 5px; border: 1px solid #000; margin-right: 10px; }
         #notification-dropdown, #product-options { display: none; position: absolute; background: white; border: 1px solid #ccc; padding: 10px; z-index: 10; }
         #seller-name-input { margin-bottom: 10px; }
         #inbox-id-container { display: none; margin-top: 10px; }
@@ -21,6 +21,33 @@
         .notification { margin-bottom: 10px; }
         .quantity-slider-container { display: flex; align-items: center; margin-top: 10px; }
         .quantity-display { margin-right: 10px; }
+        body.dark-mode {
+            background-color: #121212;
+            color: #e0e0e0;
+        }
+        .dark-mode .product {
+            background-color: #1e1e1e;
+            border-color: #444;
+        }
+        .dark-mode .delete-button {
+            color: #ff5252;
+        }
+        .dark-mode #inbox, .dark-mode #list-product, .dark-mode #clear-inbox {
+            border-color: #e0e0e0;
+            color: #e0e0e0;
+        }
+        .dark-mode #notification-dropdown, .dark-mode #product-options {
+            background-color: #2c2c2c;
+            border-color: #444;
+        }
+        .dark-mode input, .dark-mode select, .dark-mode button {
+            background-color: #333;
+            color: #fff;
+            border-color: #555;
+        }
+        .dark-mode .quantity-slider-container {
+            color: #e0e0e0;
+        }
     </style>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.1.3/firebase-app.js";
@@ -42,7 +69,7 @@
         let userUID = null;
         let sellerNameInput = null;
         let unreadNotificationsCount = 0;
-        
+
 class NotificationManager {
     constructor() {
         this.notifications = [];
@@ -78,7 +105,18 @@ class NotificationManager {
             }
         }
 
-        document.addEventListener('DOMContentLoaded', () => {
+      function toggleDarkMode() {
+          document.body.classList.toggle('dark-mode');
+          const isDarkMode = document.body.classList.contains('dark-mode');
+          localStorage.setItem('darkMode', isDarkMode ? 'enabled' : 'disabled');
+      }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const darkMode = localStorage.getItem('darkMode');
+        if (darkMode === 'enabled') {
+            document.body.classList.add('dark-mode');
+        }
+
             sellerNameInput = document.getElementById('seller-name-input');
             loadProducts();
             loadSellerName();
@@ -86,7 +124,6 @@ class NotificationManager {
             checkInboxID();
             initializeNotifications();
             sellerNameInput.addEventListener('keydown', lockSellerName);
-
             if (inboxID) {
                 const inboxRef = ref(db, `inboxes/${inboxID}`);
                 onValue(inboxRef, (snapshot) => {
@@ -123,23 +160,28 @@ class NotificationManager {
         document.getElementById('clear-inbox').onclick = function() {
             clearInbox();
         };
+
         function initializeInboxMonitoring() {
     if (inboxID) {
         if (activeInboxListener) {
             activeInboxListener();
         }
+
         const inboxRef = ref(db, `inboxes/${inboxID}`);
         activeInboxListener = onValue(inboxRef, (snapshot) => {
             let newUnreadCount = 0;
             const notifications = [];
+
             if (snapshot.exists()) {
                 snapshot.forEach(childSnapshot => {
                     const notification = {
                         id: childSnapshot.key,
                         ...childSnapshot.val()
                     };
+
                     if (!notification.read) {
                         newUnreadCount++;
+
                         if (!notifiedMessageIds.has(notification.id) && Notification.permission === "granted") {
                             notifiedMessageIds.add(notification.id);
                             new Notification("New JBay Message", {
@@ -147,6 +189,7 @@ class NotificationManager {
                             });
                         }
                     }
+
                     notifications.push(notification);
                 });
             }
@@ -172,41 +215,52 @@ class NotificationManager {
 
             loadProducts();
         };
+
         function loadProducts() {
-            const productsRef = ref(db, 'products');
-            get(productsRef).then(snapshot => {
-                const productList = document.getElementById('product-list');
-                productList.innerHTML = '';
-                if (snapshot.exists()) {
-                    snapshot.forEach(childSnapshot => {
-                        const product = childSnapshot.val();
-                        const deleteButton = userUID === '1' ? `<span class="delete-button" onclick="deleteProduct('${childSnapshot.key}')">X</span>` : '';
-                        productList.innerHTML += `
-                            <div class="product">
-                                <strong>${product.name}</strong><br>
-                                Price: ${product.price} JB<br>
-                                Seller: ${decodeURIComponent(product.seller)}<br>
-                                Category: ${product.category}<br>
-                                Quantity Available: ${product.quantity}<br>
-                                <div class="quantity-slider-container">
-                                    <span class="quantity-display">1</span>
-                                    <input type="range" id="quantity-slider-${childSnapshot.key}" min="1" max="${product.quantity}" value="1" oninput="updateSlider('${childSnapshot.key}')">
-                                    <button onclick="confirmPurchase('${childSnapshot.key}', ${product.quantity})">Buy</button>
-                                </div>
-                                ${deleteButton}
+    const selectedCategory = document.getElementById('category-sorter').value;
+    const productsRef = ref(db, 'products');
+    
+    get(productsRef).then(snapshot => {
+        const productList = document.getElementById('product-list');
+        productList.innerHTML = '';
+        if (snapshot.exists()) {
+            snapshot.forEach(childSnapshot => {
+                const product = childSnapshot.val();
+                if (selectedCategory === "All" || product.category === selectedCategory) {
+                    const deleteButton = userUID === '1' ? `<span class="delete-button" onclick="deleteProduct('${childSnapshot.key}')">X</span>` : '';
+                    productList.innerHTML += `
+                        <div class="product">
+                            <strong>${product.name}</strong><br>
+                            Price: ${product.price} JB<br>
+                            Seller: ${decodeURIComponent(product.seller)}<br>
+                            Category: ${product.category}<br>
+                            Quantity Available: ${product.quantity}<br>
+                            <div class="quantity-slider-container">
+                                <span class="quantity-display">1</span>
+                                <input type="range" id="quantity-slider-${childSnapshot.key}" min="1" max="${product.quantity}" value="1" oninput="updateSlider('${childSnapshot.key}')">
+                                <button onclick="confirmPurchase('${childSnapshot.key}', ${product.quantity})">Buy</button>
                             </div>
-                        `;
-                    });
-                } else {
-                    productList.innerHTML = 'No products found.';
+                            ${deleteButton}
+                        </div>
+                    `;
                 }
             });
+        } else {
+            productList.innerHTML = 'No products found.';
         }
+    });
+}
+
+window.sortByCategory = function() {
+    loadProducts();
+};
+
         window.updateSlider = function(productId) {
             const slider = document.getElementById(`quantity-slider-${productId}`);
             const display = slider.previousElementSibling;
             display.textContent = slider.value;
         };
+
           window.confirmPurchase = function(productId, maxQuantity) {
               const slider = document.getElementById(`quantity-slider-${productId}`);
               const quantityToBuy = parseInt(slider.value);
@@ -336,19 +390,19 @@ function loadInboxMessages() {
             inboxContainer.style.display = 'block';
         }
 
-        window.setInboxID = function(event) {
-            if (event.key === 'Enter') {
-                inboxID = document.getElementById('inbox-id').value;
-                if (inboxID.length === 5) {
-                    setCookie('inboxID', inboxID, 10000);
-                    document.getElementById('inbox-id-container').style.display = 'none';
-                    updateInboxDisplay();
-                    initializeInboxMonitoring();
-                } else {
-                    alert('Inbox ID must be 5 digits');
-                }
-            }
-        };
+window.setInboxID = function(event) {
+    if (event.key === 'Enter') {
+        inboxID = document.getElementById('inbox-id').value;
+        if (inboxID.length === 5) {
+            setCookie('inboxID', inboxID, 10000);
+            document.getElementById('inbox-id-container').style.display = 'none';
+            updateInboxDisplay();
+            initializeInboxMonitoring();
+        } else {
+            alert('Inbox ID must be 5 digits');
+        }
+    }
+};
 
         function getSellerName() {
             const name = encodeURIComponent(sellerNameInput.value);
@@ -412,7 +466,6 @@ function loadInboxMessages() {
 
         let activeInboxListener = null;
         let notifiedMessageIds = new Set();
-
     </script>
 </head>
 <body>
@@ -428,6 +481,7 @@ function loadInboxMessages() {
             <input type="number" id="price" placeholder="Price (JB)">
             <input type="number" id="quantity" placeholder="Quantity">
             <select id="category">
+                <option value="General Product">General Product</option>
                 <option value="Candy and Food">Candy and Food</option>
                 <option value="Goods and Services">Goods and Services</option>
                 <option value="The Sweets Shop">The Sweets Shop</option>
@@ -441,7 +495,13 @@ function loadInboxMessages() {
 
     <input type="text" id="seller-name-input" placeholder="Your Name">
     <button onclick="resetSellerName()">Reset Name</button>
-
+    <select id="category-sorter" onchange="sortByCategory()">
+      <option value="All">All Categories</option>
+      <option value="General Product">General Product</option>
+      <option value="Candy and Food">Candy and Food</option>
+      <option value="Goods and Services">Goods and Services</option>
+      <option value="The Sweets Shop">The Sweets Shop</option>
+    </select>
     <div id="product-list"></div>
 
     <h1>Rules:</h1>
