@@ -21,32 +21,21 @@
         .notification { margin-bottom: 10px; }
         .quantity-slider-container { display: flex; align-items: center; margin-top: 10px; }
         .quantity-display { margin-right: 10px; }
-        body.dark-mode {
-            background-color: #121212;
-            color: #e0e0e0;
+        #delete-all {
+            background-color: red;
+            color: white;
+            padding: 5px 10px;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.2s;
         }
-        .dark-mode .product {
-            background-color: #1e1e1e;
-            border-color: #444;
+        #delete-all:hover {
+            animation: flash 0.4s infinite;
         }
-        .dark-mode .delete-button {
-            color: #ff5252;
-        }
-        .dark-mode #inbox, .dark-mode #list-product, .dark-mode #clear-inbox {
-            border-color: #e0e0e0;
-            color: #e0e0e0;
-        }
-        .dark-mode #notification-dropdown, .dark-mode #product-options {
-            background-color: #2c2c2c;
-            border-color: #444;
-        }
-        .dark-mode input, .dark-mode select, .dark-mode button {
-            background-color: #333;
-            color: #fff;
-            border-color: #555;
-        }
-        .dark-mode .quantity-slider-container {
-            color: #e0e0e0;
+        @keyframes flash {
+            0% { background-color: red; }
+            50% { background-color: yellow; }
+            100% { background-color: red; }
         }
     </style>
     <script type="module">
@@ -111,6 +100,40 @@ class NotificationManager {
           localStorage.setItem('darkMode', isDarkMode ? 'enabled' : 'disabled');
       }
 
+      function updateDeleteAllButtonVisibility() {
+        const deleteAllButton = document.getElementById('delete-all');
+        const titleToggle = document.getElementById('title-toggle');
+        if (userUID === '1') {
+            deleteAllButton.style.display = 'inline-block';
+            titleToggle.style.display = 'inline-block';
+        } else {
+            deleteAllButton.style.display = 'none';
+            titleToggle.style.display = 'none';
+        }
+    }
+      
+      function updateTitle(newTitle) {
+        const titleRef = ref(db, 'settings/title');
+        set(titleRef, newTitle);
+    }
+
+    function initializeTitleListener() {
+        const titleRef = ref(db, 'settings/title');
+        onValue(titleRef, (snapshot) => {
+            if (snapshot.exists() && userUID === '1') {
+                document.getElementById('site-title').textContent = snapshot.val();
+            }
+        });
+    }
+
+    window.toggleTitle = function() {
+        if (userUID === '1') {
+            const currentTitle = document.getElementById('site-title').textContent;
+            const newTitle = currentTitle === 'JBay' ? 'Jpegbay' : 'JBay';
+            updateTitle(newTitle);
+        }
+    };
+
     document.addEventListener('DOMContentLoaded', () => {
         const darkMode = localStorage.getItem('darkMode');
         if (darkMode === 'enabled') {
@@ -123,6 +146,8 @@ class NotificationManager {
             loadUID();
             checkInboxID();
             initializeNotifications();
+            updateDeleteAllButtonVisibility();
+            initializeTitleListener();
             sellerNameInput.addEventListener('keydown', lockSellerName);
             if (inboxID) {
                 const inboxRef = ref(db, `inboxes/${inboxID}`);
@@ -199,57 +224,109 @@ class NotificationManager {
         });
     }
 }
+
+
+        let firstVisit = false;
+        function checkFirstVisit() {
+            if (!localStorage.getItem('hasVisitedBefore')) {
+                firstVisit = true;
+                localStorage.setItem('hasVisitedBefore', 'true');
+            }
+        }
+
+        function sendWelcomeMessage() {
+            if (firstVisit && inboxID) {
+                const notificationId = `welcome-${Date.now()}`;
+                const welcomeNotification = {
+                    message: "Welcome to JBay! Start browsing and listing products. Remember to follow the rules and enjoy trading!",
+                    timestamp: Date.now(),
+                    read: false,
+                    type: 'system'
+                };
+                
+                const inboxRef = ref(db, `inboxes/${inboxID}/${notificationId}`);
+                set(inboxRef, welcomeNotification);
+            }
+        }
+
         window.submitProduct = function() {
+            if (!getSellerName()) {
+                alert("Please set your username before listing products!");
+                return;
+            }
+
             const name = document.getElementById('product-name').value;
             const seller = getSellerName();
             const price = document.getElementById('price').value;
             const category = document.getElementById('category').value;
             const quantity = document.getElementById('quantity').value;
+            const location = document.getElementById('location').value;
 
             const newProductRef = ref(db, 'products/' + Date.now());
-            set(newProductRef, { name, seller, price, category, quantity, inboxID });
+            set(newProductRef, { 
+                name, 
+                seller, 
+                price, 
+                category, 
+                quantity, 
+                location, 
+                inboxID,
+                sellerUID: userUID 
+            });
 
             document.getElementById('product-name').value = '';
             document.getElementById('price').value = '';
             document.getElementById('quantity').value = '';
+            document.getElementById('location').value = '';
 
             loadProducts();
         };
 
         function loadProducts() {
-    const selectedCategory = document.getElementById('category-sorter').value;
-    const productsRef = ref(db, 'products');
-    
-    get(productsRef).then(snapshot => {
-        const productList = document.getElementById('product-list');
-        productList.innerHTML = '';
-        if (snapshot.exists()) {
-            snapshot.forEach(childSnapshot => {
-                const product = childSnapshot.val();
-                if (selectedCategory === "All" || product.category === selectedCategory) {
-                    const deleteButton = userUID === '1' ? `<span class="delete-button" onclick="deleteProduct('${childSnapshot.key}')">X</span>` : '';
-                    productList.innerHTML += `
-                        <div class="product">
-                            <strong>${product.name}</strong><br>
-                            Price: ${product.price} JB<br>
-                            Seller: ${decodeURIComponent(product.seller)}<br>
-                            Category: ${product.category}<br>
-                            Quantity Available: ${product.quantity}<br>
-                            <div class="quantity-slider-container">
-                                <span class="quantity-display">1</span>
-                                <input type="range" id="quantity-slider-${childSnapshot.key}" min="1" max="${product.quantity}" value="1" oninput="updateSlider('${childSnapshot.key}')">
-                                <button onclick="confirmPurchase('${childSnapshot.key}', ${product.quantity})">Buy</button>
-                            </div>
-                            ${deleteButton}
-                        </div>
-                    `;
+            const selectedCategory = document.getElementById('category-sorter').value;
+            const productsRef = ref(db, 'products');
+            
+            get(productsRef).then(snapshot => {
+                const productList = document.getElementById('product-list');
+                productList.innerHTML = '';
+                if (snapshot.exists()) {
+                    snapshot.forEach(childSnapshot => {
+                        const product = childSnapshot.val();
+                        if (selectedCategory === "All" || product.category === selectedCategory) {
+                            const deleteButton = userUID === '1' ? `<span class="delete-button" onclick="deleteProduct('${childSnapshot.key}')">X</span>` : '';
+                            const disabledButton = !getSellerName() ? 'disabled-button' : '';
+                            
+                            productList.innerHTML += `
+                                <div class="product">
+                                    <strong>${product.name}</strong><br>
+                                    Price: ${product.price} JB<br>
+                                    Seller: ${decodeURIComponent(product.seller)} (${product.sellerUID})<br>
+                                    Category: ${product.category}<br>
+                                    Location: ${product.location || 'Not specified'}<br>
+                                    Quantity Available: ${product.quantity}<br>
+                                    <div class="quantity-slider-container">
+                                        <span class="quantity-display">1</span>
+                                        <input type="range" id="quantity-slider-${childSnapshot.key}" 
+                                            min="1" max="${product.quantity}" value="1" 
+                                            oninput="updateSlider('${childSnapshot.key}')"
+                                            ${!getSellerName() ? 'disabled' : ''}>
+                                        <button onclick="confirmPurchase('${childSnapshot.key}', ${product.quantity})"
+                                            class="${disabledButton}"
+                                            ${!getSellerName() ? 'disabled' : ''}>
+                                            Buy
+                                        </button>
+                                    </div>
+                                    ${deleteButton}
+                                    <span class="product-id">ID: ${childSnapshot.key}</span>
+                                </div>
+                            `;
+                        }
+                    });
+                } else {
+                    productList.innerHTML = 'No products found.';
                 }
             });
-        } else {
-            productList.innerHTML = 'No products found.';
         }
-    });
-}
 
 window.sortByCategory = function() {
     loadProducts();
@@ -286,15 +363,16 @@ window.sortByCategory = function() {
               }
           };
 
-          function sendPurchaseNotification(product, quantity) {
+        function sendPurchaseNotification(product, quantity) {
             const notificationId = `notif-${Date.now()}`;
             const buyerUsername = decodeURIComponent(getSellerName());
             const sellerInboxID = product.inboxID;
             const totalPrice = product.price * quantity;
             const pricePerProduct = product.price;
+            const location = product.location || 'Not specified';
             
             const notification = {
-                message: `${buyerUsername} has purchased ${quantity} of your product "${product.name}". The total price combined is ${totalPrice} JB, the price per product was ${pricePerProduct} JB.`,
+                message: `${buyerUsername} has purchased ${quantity} of your product "${product.name}". The total price combined is ${totalPrice} JB, the price per product was ${pricePerProduct} JB. The location set for this product was ${location}.`,
                 timestamp: Date.now(),
                 read: false,
                 type: 'purchase',
@@ -303,7 +381,7 @@ window.sortByCategory = function() {
                     product: product.name,
                     quantity: quantity,
                     totalPrice: totalPrice,
-                    pricePerUnit: pricePerProduct
+                    pricePerUnit: pricePerProduct,
                 }
             };
 
@@ -311,7 +389,6 @@ window.sortByCategory = function() {
             set(sellerInboxRef, notification);
             setTimeout(() => remove(sellerInboxRef), 7 * 24 * 60 * 60 * 1000);
         }
-
 function loadInboxMessages() {
     const inboxRef = ref(db, `inboxes/${inboxID}`);
     get(inboxRef).then(snapshot => {
@@ -371,15 +448,6 @@ function loadInboxMessages() {
             });
         }
 
-        function checkInboxID() {
-            inboxID = getCookie('inboxID');
-            if (!inboxID) {
-                document.getElementById('inbox').innerText = "Set your Inbox ID!";
-            } else {
-                updateInboxDisplay();
-            }
-        }
-
         function updateInboxDisplay() {
             const inboxButton = document.getElementById('inbox');
             inboxButton.innerHTML = `Inbox ${unreadNotificationsCount > 0 ? `(${unreadNotificationsCount})` : ''}`;
@@ -390,19 +458,20 @@ function loadInboxMessages() {
             inboxContainer.style.display = 'block';
         }
 
-window.setInboxID = function(event) {
-    if (event.key === 'Enter') {
-        inboxID = document.getElementById('inbox-id').value;
-        if (inboxID.length === 5) {
-            setCookie('inboxID', inboxID, 10000);
-            document.getElementById('inbox-id-container').style.display = 'none';
+        function generateInboxID() {
+            return Math.floor(Math.random() * 9e19) + 1e19;
+        }
+
+        function checkInboxID() {
+            inboxID = getCookie('inboxID');
+            if (!inboxID) {
+                inboxID = generateInboxID();
+                setCookie('inboxID', inboxID, 10000);
+                sendWelcomeMessage();
+            }
             updateInboxDisplay();
             initializeInboxMonitoring();
-        } else {
-            alert('Inbox ID must be 5 digits');
         }
-    }
-};
 
         function getSellerName() {
             const name = encodeURIComponent(sellerNameInput.value);
@@ -445,10 +514,11 @@ window.setInboxID = function(event) {
         function loadUID() {
             let uid = getCookie('userUID');
             if (!uid) {
-                uid = Math.floor(Math.random() * 9000000) + 1000000;
+                uid = Math.floor(Math.random() * 9e19) + 1e19;
                 setCookie('userUID', uid, 10000);
             }
             userUID = uid;
+            updateDeleteAllButtonVisibility();
         }
 
         window.lockSellerName = function(event) {
@@ -464,14 +534,33 @@ window.setInboxID = function(event) {
             setCookie('sellerName', '', -1);
         };
 
+        window.deleteAllProducts = function() {
+            if (userUID === '1') {
+                const confirmation = confirm("Are you sure you want to delete ALL products? This action cannot be undone.");
+                if (confirmation) {
+                    const productsRef = ref(db, 'products');
+                    remove(productsRef).then(() => {
+                        alert("All products have been deleted");
+                        loadProducts();
+                    }).catch(error => {
+                        console.error("Error deleting products:", error);
+                        alert("Error deleting products");
+                    });
+                }
+            } else {
+                alert("You don't have permission to delete all products");
+            }
+        };
+
         let activeInboxListener = null;
         let notifiedMessageIds = new Set();
     </script>
 </head>
 <body>
-
-    <h1>JBay</h1>
+    <h1 id="site-title">JBay</h1>
     <div class="top-right">
+        <span id="title-toggle" onclick="toggleTitle()" style="display: none; cursor: pointer; margin-right: 10px;">Toggle Title</span>
+        <span id="delete-all" onclick="deleteAllProducts()">Delete All Products</span>
         <span id="inbox">Inbox (0)</span>
         <span id="clear-inbox">Clear Inbox</span>
         <span id="list-product">List Product</span>
@@ -480,6 +569,7 @@ window.setInboxID = function(event) {
             <input type="text" id="product-name" placeholder="Product Name">
             <input type="number" id="price" placeholder="Price (JB)">
             <input type="number" id="quantity" placeholder="Quantity">
+            <input type="text" id="location" placeholder="Location">
             <select id="category">
                 <option value="General Product">General Product</option>
                 <option value="Candy and Food">Candy and Food</option>
@@ -487,9 +577,6 @@ window.setInboxID = function(event) {
                 <option value="The Sweets Shop">The Sweets Shop</option>
             </select>
             <button onclick="submitProduct()">Submit</button>
-        </div>
-        <div id="inbox-id-container">
-            <input type="text" id="inbox-id" placeholder="Enter 5-digit Inbox ID" maxlength="5" onkeydown="setInboxID(event)">
         </div>
     </div>
 
